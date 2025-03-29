@@ -139,8 +139,80 @@ def generate_form(company_id: int, memory_data: Dict[str, Any]) -> str:
 
 def update_form_logic(form_data, update_command: str):
     """
-    Naive text-based update. Expand with LLM or parsing if needed.
+    Process natural language commands to update form fields.
+    Uses Claude to interpret the command and map it to the correct field.
     """
-    if "deductible" in update_command.lower():
-        form_data["deductible"] = "$5000"
-    return form_data
+    from anthropic import Anthropic
+    import os
+    import json
+    
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY environment variable not set")
+    
+    # Initialize Anthropic client
+    client = Anthropic(api_key=api_key)
+    
+    # Get all available fields from form_data
+    available_fields = list(form_data.keys())
+    
+    # Construct the prompt for Claude
+    prompt = f"""
+    You are an expert at updating insurance form data based on natural language commands.
+    
+    Here is the current form data:
+    ```json
+    {json.dumps(form_data, indent=2)}
+    ```
+    
+    The user wants to update this form with the following command:
+    "{update_command}"
+    
+    These are all the available fields that can be updated:
+    {', '.join(available_fields)}
+    
+    Please update the form data based on the command. Your response should be ONLY a JSON object 
+    with the updated form data. Keep all existing fields and values, only changing what is mentioned
+    in the command.
+    
+    If the command is ambiguous or unclear, make your best judgment based on common insurance terminology.
+    
+    JSON format only, no explanation.
+    """
+    
+    try:
+        # Call Claude API
+        message = client.messages.create(
+            model="claude-3-sonnet-20240229",
+            max_tokens=2000,
+            temperature=0,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            system="You are an expert at updating insurance form data. You should only return valid JSON that matches the form data structure exactly."
+        )
+        
+        content = message.content[0].text
+        
+        # Extract the JSON part
+        if "```json" in content:
+            json_content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            json_content = content.split("```")[1].strip()
+        else:
+            json_content = content.strip()
+        
+        # Parse the extracted JSON
+        updated_form_data = json.loads(json_content)
+        
+        return updated_form_data
+    
+    except Exception as e:
+        print(f"Error with Claude API: {str(e)}")
+        # Fallback to simple logic if Claude fails
+        if "deductible" in update_command.lower():
+            form_data["deductible"] = "$5000"
+        return form_data

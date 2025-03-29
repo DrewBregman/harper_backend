@@ -51,19 +51,26 @@ def update_form_endpoint(request: UpdateFormRequest):
     Applies a text-based command to the current form.
     Moves the old state into 'history' for undo.
     """
-    state = FORM_STATES[request.company_id]
-    if state["current"] is None:
-        raise HTTPException(status_code=400, detail="No form state for this company.")
+    try:
+        company_id = request.formData.get('company_id')
+        state = FORM_STATES[company_id]
+        if state["current"] is None:
+            raise HTTPException(status_code=400, detail="No form state for this company.")
 
-    # Save old
-    old_state = copy.deepcopy(state["current"])
-    state["history"].append(old_state)
+        # Save old
+        old_state = copy.deepcopy(state["current"])
+        state["history"].append(old_state)
 
-    # Apply command
-    updated_form = apply_command_logic(state["current"], request.command)
-    state["current"] = updated_form
+        # Apply command
+        updated_form = apply_command_logic(request.formData, request.updateCommand)
+        state["current"] = updated_form
 
-    return {"updatedFormData": updated_form}
+        return {"updatedFormData": updated_form}
+    except Exception as e:
+        print(f"Error in update_form_endpoint: {str(e)}")
+        # If there's an error with the state lookup or form not found,
+        # just update the form data directly without state management
+        return {"updatedFormData": apply_command_logic(request.formData, request.updateCommand)}
 
 @router.post("/undo/{company_id}")
 def undo_form_endpoint(company_id: int):
@@ -113,14 +120,110 @@ async def transcribe_audio(file: UploadFile = File(...)):
 
 def generate_form_dict(company_id: int, memory_data: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Example: merges memory_data into a basic dict.
+    Uses our form generation logic to extract and structure all fields from memory data.
     """
-    company_section = memory_data.get("company", {})
+    from logic.form_generation import generate_form
+    from services.parse_memory_service import parse_memory_data
+    
+    # Parse all fields from memory data using Claude
+    parsed_data = parse_memory_data(memory_data)
+    
+    # Convert to the format needed for our forms
     return {
-        "agency": "ABC Insurance",
-        "applicantName": company_section.get("company_name", ""),
-        "contactInformationPrimary": company_section.get("company_primary_email", ""),
-        "annualRevenues": str(company_section.get("company_annual_revenue_usd", "")),
+        "billingPlanForPolicyIsDirect": parsed_data.get("billingPlanForPolicyIsDirect", ""),
+        "applicantIsLLC": parsed_data.get("applicantIsLLC", ""),
+        "dateOfApplication": parsed_data.get("dateOfApplication", ""),
+        "agency": parsed_data.get("agency", ""),
+        "carrier": parsed_data.get("carrier", ""),
+        "naicCode": parsed_data.get("naicCode", ""),
+        "companyPolicyOrProgramName": parsed_data.get("companyPolicyOrProgramName", ""),
+        "programCode": parsed_data.get("programCode", ""),
+        "agencyCustomerId": parsed_data.get("agencyCustomerId", ""),
+        "hasBusinessOwnersAttachedSections": parsed_data.get("hasBusinessOwnersAttachedSections", False),
+        "hasCommercialGeneralLiabilitySectionsAttached": parsed_data.get("hasCommercialGeneralLiabilitySectionsAttached", False),
+        "paymentPlan": parsed_data.get("paymentPlan", ""),
+        "methodOfPayment": parsed_data.get("methodOfPayment", ""),
+        "audit1": parsed_data.get("audit1", ""),
+        "applicantName1": {
+            "firstName": parsed_data.get("applicantName1", {}).get("firstName", ""),
+            "mi": parsed_data.get("applicantName1", {}).get("mi", ""),
+            "lastName": parsed_data.get("applicantName1", {}).get("lastName", "")
+        },
+        "glCode1": parsed_data.get("glCode1", ""),
+        "sic1": parsed_data.get("sic1", ""),
+        "naics1": parsed_data.get("naics1", ""),
+        "feinOrSocSec1": parsed_data.get("feinOrSocSec1", ""),
+        "websiteAddress": {
+            "street1": parsed_data.get("websiteAddress", {}).get("street1", ""),
+            "street2": parsed_data.get("websiteAddress", {}).get("street2", ""),
+            "city": parsed_data.get("websiteAddress", {}).get("city", ""),
+            "state": parsed_data.get("websiteAddress", {}).get("state", ""),
+            "zip": parsed_data.get("websiteAddress", {}).get("zip", ""),
+            "country": parsed_data.get("websiteAddress", {}).get("country", "")
+        },
+        "contactInformationPrimary1": parsed_data.get("contactInformationPrimary1", ""),
+        "contactInformationSecondary1": parsed_data.get("contactInformationSecondary1", ""),
+        "premisesZipcode": {
+            "street1": parsed_data.get("premisesZipcode", {}).get("street1", ""),
+            "street2": parsed_data.get("premisesZipcode", {}).get("street2", ""),
+            "city": parsed_data.get("premisesZipcode", {}).get("city", ""),
+            "state": parsed_data.get("premisesZipcode", {}).get("state", ""),
+            "zip": parsed_data.get("premisesZipcode", {}).get("zip", ""),
+            "country": parsed_data.get("premisesZipcode", {}).get("country", "")
+        },
+        "agencyCustomerId1": parsed_data.get("agencyCustomerId1", ""),
+        "location": parsed_data.get("location", ""),
+        "numberOfFullTimeEmployees": parsed_data.get("numberOfFullTimeEmployees", ""),
+        "building": parsed_data.get("building", ""),
+        "county": {
+            "street1": parsed_data.get("county", {}).get("street1", ""),
+            "street2": parsed_data.get("county", {}).get("street2", ""),
+            "city": parsed_data.get("county", {}).get("city", ""),
+            "state": parsed_data.get("county", {}).get("state", ""),
+            "zip": parsed_data.get("county", {}).get("zip", ""),
+            "country": parsed_data.get("county", {}).get("country", "")
+        },
+        "location1": parsed_data.get("location1", ""),
+        "partTimeEmployeesNumber": parsed_data.get("partTimeEmployeesNumber", 0),
+        "building1": parsed_data.get("building1", ""),
+        "annualRevenues": parsed_data.get("annualRevenues", 0),
+        "location2": parsed_data.get("location2", ""),
+        "building2": parsed_data.get("building2", ""),
+        "location3": parsed_data.get("location3", ""),
+        "building3": parsed_data.get("building3", ""),
+        "descriptionOfPrimaryOperations": parsed_data.get("descriptionOfPrimaryOperations", ""),
+        "agencyCustomerId2": parsed_data.get("agencyCustomerId2", ""),
+        "priorCarrierForGeneralLiability": parsed_data.get("priorCarrierForGeneralLiability", ""),
+        "priorCarrierForAutomobile": parsed_data.get("priorCarrierForAutomobile", ""),
+        "priorCarrierForProperty": parsed_data.get("priorCarrierForProperty", ""),
+        "agencyCustomerId3": parsed_data.get("agencyCustomerId3", ""),
+        "producersName": parsed_data.get("producersName", ""),
+        "depositAmount": parsed_data.get("depositAmount", ""),
+        "minimumPremium": parsed_data.get("minimumPremium", ""),
+        "policyPremium": parsed_data.get("policyPremium", ""),
+        "hasEquipmentFloaterSectionsAttached": parsed_data.get("hasEquipmentFloaterSectionsAttached", False),
+        "hasElectronicDataProcSectionAttached": parsed_data.get("hasElectronicDataProcSectionAttached", False),
+        "hasAccountsReceivableAttached": parsed_data.get("hasAccountsReceivableAttached", False),
+        "hasBoilerAndMachinery": parsed_data.get("hasBoilerAndMachinery", False),
+        "hasBusinessAuto": parsed_data.get("hasBusinessAuto", False),
+        "hasPropertySectionsAttached": parsed_data.get("hasPropertySectionsAttached", False),
+        "hasTruckersMotorCarrierSectionsAttached": parsed_data.get("hasTruckersMotorCarrierSectionsAttached", False),
+        "hasTransportationSectionsAttached": parsed_data.get("hasTransportationSectionsAttached", False),
+        "policyNumber": parsed_data.get("policyNumber", ""),
+        "agencyContactName": parsed_data.get("agencyContactName", ""),
+        "agencyContactPhone": parsed_data.get("agencyContactPhone", ""),
+        "agencyEmailAddress": parsed_data.get("agencyEmailAddress", ""),
+        "proposedEffectiveDate": parsed_data.get("proposedEffectiveDate", ""),
+        "billingPlanIsAgency": parsed_data.get("billingPlanIsAgency", False),
+        "field16f996340b2011f083dfd3961689d753": parsed_data.get("field16f996340b2011f083dfd3961689d753", ""),
+        "applicantIsNotForProfit": parsed_data.get("applicantIsNotForProfit", False),
+        "applicantContactName": parsed_data.get("applicantContactName", ""),
+        "applicantPhoneNumber": parsed_data.get("applicantPhoneNumber", ""),
+        "applicantEmailAddress": parsed_data.get("applicantEmailAddress", ""),
+        "premisesState": parsed_data.get("premisesState", ""),
+        "hasFormalSafetyProgram": parsed_data.get("hasFormalSafetyProgram", ""),
+        "followsOsha": parsed_data.get("followsOsha", ""),
+        "hasSafetyPosition": parsed_data.get("hasSafetyPosition", ""),
         "deductible": ""
     }
 
@@ -135,18 +238,11 @@ def generate_pdf_and_save(company_id: int, form_fields: Dict[str, Any]) -> str:
 
 def apply_command_logic(current_form: Dict[str, Any], command: str) -> Dict[str, Any]:
     """
-    Very naive approach to interpret the command text and modify fields.
-    You can expand with advanced parsing or LLMs.
+    Uses Claude to intelligently interpret commands and update the form.
     """
-    cmd = command.lower()
-    if "deductible" in cmd:
-        current_form["deductible"] = "$5000"
-    if "applicant name" in cmd:
-        current_form["applicantName"] = "Acme Inc"
-    if "annual revenue" in cmd:
-        current_form["annualRevenues"] = "5000000"  # example
-    if "undo" in cmd:
-        # We won't do anything here; user can just call /undo
-        pass
-
-    return current_form
+    from logic.form_generation import update_form_logic
+    
+    # Use our intelligent form update logic
+    updated_form = update_form_logic(current_form, command)
+    
+    return updated_form
